@@ -8,13 +8,20 @@ updates:
       actions:
         patterns: ["*"]
 
-
-  # Un-Comment when a dependencies manifest is added to the repository
+  # Un-comment when web/package.json is added
   # - package-ecosystem: npm
-  #   directory: /
+  #   directory: /web
   #   schedule:
   #     interval: weekly
   #   groups:
   #     dependencies:
   #       patterns: ["*"]
 
+  # Base images: node and nginx in web/, graphql-engine in hasura/
+  - package-ecosystem: docker
+    directories: [/web, /hasura]
+    schedule:
+      interval: weekly
+    groups:
+      images:
+        patterns: ["*"]

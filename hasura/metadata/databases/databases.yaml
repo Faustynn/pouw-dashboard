@@ -1,0 +1,11 @@
+# The database of pouw-indexer. Its URL comes from the environment of the
+# Hasura container (PG_DATABASE_URL), the same in CI, locally and on staging.
+- name: default
+  kind: postgres
+  configuration:
+    connection_info:
+      database_url:
+        from_env: PG_DATABASE_URL
+      isolation_level: read-committed
+      use_prepared_statements: false
+  tables: "!include default/tables/tables.yaml"

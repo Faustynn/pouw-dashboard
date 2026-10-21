@@ -1,0 +1,5 @@
+# Hasura CLI project: hasura console / hasura metadata export|apply --project hasura
+# Admin secret comes from HASURA_GRAPHQL_ADMIN_SECRET, never from this file.
+version: 3
+endpoint: http://localhost:8081
+metadata_directory: metadata
