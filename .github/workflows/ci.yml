@@ -14,8 +14,9 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  ci-ok:
-    name: ci-ok
+  # React explorer in web/
+  web:
+    name: web
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -23,37 +24,150 @@ jobs:
       - name: Detect project
         id: detect
         run: |
-          if [ -f package.json ]; then
+          if [ -f web/package.json ]; then
             echo "node=true" >> "$GITHUB_OUTPUT"
           else
-            echo "::notice::package.json does not yet exist; the checks are skipped."
+            echo "::notice::web/package.json does not exist yet, checks will be skipped."
           fi
 
       - uses: actions/setup-node@v7
         if: steps.detect.outputs.node == 'true'
         with:
           node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
 
       - name: Install
         if: steps.detect.outputs.node == 'true'
-        run: if [ -f package-lock.json ]; then npm ci; else npm install; fi
+        working-directory: web
+        run: npm ci
 
       - name: Lint
         if: steps.detect.outputs.node == 'true'
+        working-directory: web
         run: npm run lint --if-present
 
       - name: Test
         if: steps.detect.outputs.node == 'true'
+        working-directory: web
         run: npm test --if-present
 
       - name: Build
         if: steps.detect.outputs.node == 'true'
-        run: npm run build --if-present
+        working-directory: web
+        run: npm run build
 
       - name: Vulnerable dependencies (npm audit)
         if: steps.detect.outputs.node == 'true'
+        working-directory: web
         run: npm audit --omit=dev --audit-level=high
 
       - name: Dockerfile lint (hadolint)
-        if: hashFiles('Dockerfile') != ''
-        run: docker run --rm -i ghcr.io/hadolint/hadolint < Dockerfile
+        run: docker run --rm -i ghcr.io/hadolint/hadolint < web/Dockerfile
+
+  # Hasura metadata in hasura/ over the schema of pouw-indexer: the image from
+  # hasura/Dockerfile applies the metadata on start and refuses inconsistent metadata
+  hasura:
+    name: hasura
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: pouw
+          POSTGRES_PASSWORD: pouw
+          POSTGRES_DB: pouw
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U pouw"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://pouw:pouw@localhost:5432/pouw
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/checkout@v7
+        with:
+          repository: PoUW-ZK/pouw-indexer
+          path: indexer
+
+      - name: Detect indexer migrations
+        id: detect
+        run: |
+          if [ -f indexer/alembic.ini ]; then
+            echo "alembic=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::pouw-indexer has no Alembic migrations yet, only hasura/seeds are applied."
+          fi
+
+      - uses: actions/setup-python@v7
+        if: steps.detect.outputs.alembic == 'true'
+        with:
+          python-version: "3.12"
+
+      # The indexer reads the database from DATABASE_URL
+      - name: Indexer schema (alembic upgrade head)
+        if: steps.detect.outputs.alembic == 'true'
+        working-directory: indexer
+        run: |
+          pip install .
+          alembic upgrade head
+
+      # Fake data (and, until the indexer has migrations, the schema itself)
+      - name: Seeds
+        run: |
+          shopt -s nullglob
+          for f in hasura/seeds/default/*.sql; do
+            echo "== $f"
+            psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -q -f "$f"
+          done
+
+      - name: Dockerfile lint (hadolint)
+        run: docker run --rm -i ghcr.io/hadolint/hadolint < hasura/Dockerfile
+
+      - name: Build image
+        run: docker build -t pouw-dashboard-hasura:ci hasura
+
+      - name: Start Hasura (hasura metadata apply)
+        run: |
+          docker run -d --name hasura --network host \
+            -e PG_DATABASE_URL="$DATABASE_URL" \
+            -e HASURA_GRAPHQL_METADATA_DATABASE_URL="$DATABASE_URL" \
+            -e HASURA_GRAPHQL_ADMIN_SECRET=ci \
+            pouw-dashboard-hasura:ci
+          for _ in $(seq 60); do
+            if [ "$(docker inspect -f '{{.State.Running}}' hasura)" != true ]; then
+              docker logs hasura
+              echo "::error::Hasura did not start, metadata does not match the schema (see the log above)"
+              exit 1
+            fi
+            curl -fsS http://localhost:8080/healthz >/dev/null 2>&1 && exit 0
+            sleep 2
+          done
+          docker logs hasura
+          echo "::error::Hasura did not become ready in 2 minutes"
+          exit 1
+
+      - name: Metadata consistency
+        run: |
+          curl -fsS http://localhost:8080/v1/metadata \
+            -H "X-Hasura-Admin-Secret: ci" \
+            -d '{"type": "get_inconsistent_metadata", "args": {}}' | tee result.json
+          echo
+          jq -e '.is_consistent' result.json >/dev/null
+
+  # The only required check in the ruleset of main
+  ci-ok:
+    name: ci-ok
+    if: always()
+    needs: [web, hasura]
+    runs-on: ubuntu-latest
+    steps:
+      - name: All jobs passed
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          echo "Results: $RESULTS"
+          for r in $RESULTS; do [ "$r" = success ] || exit 1; done
