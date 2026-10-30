@@ -10,7 +10,7 @@
 #   - exit code other than 0 = tests failed, staging is not deployed.
 #
 # Tests are e2e/test_*.py (pytest). They run in a container attached to the
-# network, so services are reached by their compose name (http://dashboard:8000),
+# network, so services are reached by their compose name (http://dashboard:8080),
 # there are no ports on the host.
 set -euo pipefail
 
@@ -40,5 +40,5 @@ docker run --rm \
     -v "$junit_dir:/reports" \
     -w /e2e \
     python:3.12-slim \
-    sh -c "pip install -q --user -r requirements.txt &&
+    sh -c "pip install -q --user --no-warn-script-location -r requirements.txt &&
         python -m pytest -p no:cacheprovider -o junit_suite_name=$repo --junitxml=/reports/$repo.xml"
