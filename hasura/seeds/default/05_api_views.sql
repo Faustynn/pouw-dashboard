@@ -2,7 +2,9 @@
 -- Hasura tracks only these views. The frontend never sees the indexer tables, so a change
 -- of the indexer schema means changing these views, not the frontend.
 --
--- Draft for hasura/migrations/default/<timestamp>_api_views/up.sql in pouw-dashboard.
+-- Copy of pouw-indexer/migrations/0002_api_views.sql for the local compose.yml, which
+-- has no indexer. A change is a new migration there plus the same change here; CI
+-- applies the indexer's migrations instead of this file.
 -- Field names and meanings are the contract in pouw-docs/contracts/web-api.md.
 --
 -- Conventions
