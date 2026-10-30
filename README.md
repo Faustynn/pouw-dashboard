@@ -19,8 +19,9 @@ in pouw-docs. The reasons for the setup are in
 ## How the API works
 
 The database schema is owned by
-[pouw-indexer](https://github.com/PoUW-ZK/pouw-indexer) (Alembic). Hasura only
-tracks it. That is why `hasura/` has no `migrations/`.
+[pouw-indexer](https://github.com/PoUW-ZK/pouw-indexer) (SQL migrations in its
+`migrations/`, run by the indexer on start). Hasura only tracks it. That is why
+`hasura/` has no `migrations/`.
 
 Hasura does not track the indexer's tables. It tracks only **views in the
 schema `api`**, and those views are the API:
@@ -36,17 +37,25 @@ schema `api`**, and those views are the API:
 - The role `anonymous` (every request without a token) can only select from
   the views, at most 100 rows per list. There are no mutations.
 
-Until pouw-indexer has migrations, `hasura/seeds/default/*.sql` create the
-tables and the views. The views can not be Hasura migrations, because the
-Hasura image applies the metadata before its migrations, and the metadata
-refers to the views. Once pouw-indexer has Alembic migrations, the views move
-there as one migration, and `00_schema.sql` is deleted.
+The views can not be Hasura migrations, because the Hasura image applies the
+metadata before its migrations, and the metadata refers to the views. So they
+are a migration of pouw-indexer (`migrations/0002_api_views.sql`): the indexer
+creates the tables and the views on start, everywhere the network runs, and
+Hasura starts after it.
 
-| File in `hasura/seeds/default/` | What                                                  |
-| ------------------------------- | ----------------------------------------------------- |
-| `00_schema.sql`                 | The indexer schema, until pouw-indexer has migrations |
-| `05_api_views.sql`              | The `api` views and the `search` function             |
-| `10_seed.sql`                   | Fake data: one small chain, see below                 |
+The local `compose.yml` has no indexer, so the seeds stand in for its
+migrations. CI applies the real migrations of pouw-indexer instead of the
+first two seeds, so a seed that drifts from them shows up there.
+
+| File in `hasura/seeds/default/` | What                                                                  |
+| ------------------------------- | --------------------------------------------------------------------- |
+| `00_schema.sql`                 | Copy of `pouw-indexer/migrations/0001_schema_v0.sql` (local only)     |
+| `05_api_views.sql`              | Copy of `pouw-indexer/migrations/0002_api_views.sql` (local only)     |
+| `10_seed.sql`                   | Fake data: one small chain, see below                                 |
+
+A change of the views is a new migration in pouw-indexer (an applied
+migration never changes), plus the same change in `05_api_views.sql` and,
+if needed, `metadata/`. Open the two pull requests together.
 
 ## Run locally
 
@@ -124,10 +133,10 @@ Changes clicked there live only in the running database until exported.
 ## CI
 
 The `hasura` job in `.github/workflows/ci.yml` repeats a clean local start on
-every pull request: an empty Postgres, the indexer schema
-(`alembic upgrade head` from pouw-indexer once it has migrations), the seeds in
-name order, then the Hasura image. It fails when a view does not match the
-schema, or when the metadata refers to a view or column that does not exist.
+every pull request: an empty Postgres, the migrations of pouw-indexer `main`,
+the seeds in name order (without those the migrations already cover), then the
+Hasura image. It fails when a view does not match the schema, or when the
+metadata refers to a view or column that does not exist.
 
-When pouw-indexer gets Alembic migrations, the job creates the tables from
-them, so `00_schema.sql` must be deleted in the same change.
+The whole network (indexer, Hasura with this metadata, explorer) with your
+local changes: `make dev` in pouw-deploy next to this clone.

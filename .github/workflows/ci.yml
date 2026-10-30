@@ -93,33 +93,37 @@ jobs:
           repository: PoUW-ZK/pouw-indexer
           path: indexer
 
-      - name: Detect indexer migrations
-        id: detect
+      # The real schema: the SQL migrations that pouw-indexer runs on start (sqlx).
+      # Seeds that stand in for them in the local compose.yml are skipped once
+      # the migrations cover them: 00_schema.sql (the tables) and, when a
+      # migration creates the schema api, 05_api_views.sql (the views).
+      - name: Indexer schema (pouw-indexer/migrations)
         run: |
-          if [ -f indexer/alembic.ini ]; then
-            echo "alembic=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "::notice::pouw-indexer has no Alembic migrations yet, only hasura/seeds are applied."
+          shopt -s nullglob
+          files=(indexer/migrations/*.sql)
+          if [ ${#files[@]} -eq 0 ]; then
+            echo "::notice::pouw-indexer has no migrations yet, the seeds create the schema."
           fi
+          for f in "${files[@]}"; do
+            echo "== $f"
+            psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -q -f "$f"
+          done
 
-      - uses: actions/setup-python@v7
-        if: steps.detect.outputs.alembic == 'true'
-        with:
-          python-version: "3.12"
-
-      # The indexer reads the database from DATABASE_URL
-      - name: Indexer schema (alembic upgrade head)
-        if: steps.detect.outputs.alembic == 'true'
-        working-directory: indexer
-        run: |
-          pip install .
-          alembic upgrade head
-
-      # Fake data (and, until the indexer has migrations, the schema itself)
       - name: Seeds
         run: |
           shopt -s nullglob
+          skip=" "
+          if compgen -G "indexer/migrations/*.sql" >/dev/null; then
+            skip+="00_schema.sql "
+            if grep -qiE 'CREATE SCHEMA( IF NOT EXISTS)? api' indexer/migrations/*.sql; then
+              skip+="05_api_views.sql "
+            fi
+          fi
           for f in hasura/seeds/default/*.sql; do
+            if [[ "$skip" == *" $(basename "$f") "* ]]; then
+              echo "== $f (skipped, pouw-indexer/migrations has it)"
+              continue
+            fi
             echo "== $f"
             psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -q -f "$f"
           done
