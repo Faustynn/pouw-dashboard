@@ -30,7 +30,6 @@ services:
       PG_DATABASE_URL: postgres://pouw:pouw@postgres:5432/pouw
       HASURA_GRAPHQL_METADATA_DATABASE_URL: postgres://pouw:pouw@postgres:5432/pouw
       HASURA_GRAPHQL_ADMIN_SECRET: dev # local only
-      HASURA_GRAPHQL_UNAUTHORIZED_ROLE: anonymous
       # console at http://localhost:8081/console, for browsing and trying queries.
       # Metadata changes belong in hasura/metadata/ (see README.md).
       HASURA_GRAPHQL_ENABLE_CONSOLE: "true"

@@ -162,6 +162,14 @@ jobs:
           echo
           jq -e '.is_consistent' result.json >/dev/null
 
+      # The explorer's path: no token, role anonymous, views with the seed data
+      - name: Anonymous reads the API
+        run: |
+          curl -fsS http://localhost:8080/v1/graphql \
+            -d '{"query": "{ blocks(limit: 1) { hash height } }"}' | tee result.json
+          echo
+          jq -e '.data.blocks | length > 0' result.json >/dev/null
+
   # The only required check in the ruleset of main
   ci-ok:
     name: ci-ok
