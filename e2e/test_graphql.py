@@ -7,11 +7,15 @@ def test_hasura_metadata_is_consistent(service):
     assert r.status_code == 200
 
 
-def test_graphql_answers(service):
+def test_anonymous_reads_the_blocks_view(service):
+    # Without a token: the role anonymous over the api views of pouw-indexer
     r = requests.post(service("hasura", 8080) + "/v1/graphql",
-                      json={"query": "{ __typename }"}, timeout=10)
+                      json={"query": "{ blocks(limit: 1, order_by: {height: desc}) { hash height } }"},
+                      timeout=10)
     assert r.status_code == 200
-    assert "data" in r.json() or "errors" in r.json()
+    body = r.json()
+    assert "errors" not in body, body
+    assert isinstance(body["data"]["blocks"], list)
 
 
 def test_explorer_page(service):
