@@ -10,21 +10,18 @@ The requests carry no token, so they run as the role anonymous, like the explore
 
 import hashlib
 import os
+import sys
 from pathlib import Path
 
 import pytest
 import requests
-from graphql import OperationType, parse, print_ast
-from graphql.language import (
-    DocumentNode,
-    FragmentDefinitionNode,
-    FragmentSpreadNode,
-    OperationDefinitionNode,
-    Visitor,
-    visit,
-)
+from graphql import OperationType, parse
+from graphql.language import DocumentNode, FragmentDefinitionNode, OperationDefinitionNode
 
 REPO = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(REPO / "hasura"))
+from allowlist import entries, is_stream  # noqa: E402  the documents of the allow-list
+
 HASURA_URL = os.environ.get("HASURA_URL", "http://localhost:8081").rstrip("/")
 CONTRACT = Path(
     os.environ.get("WEB_API_GRAPHQL", REPO.parent / "pouw-docs" / "contracts" / "web-api.graphql")
@@ -44,39 +41,40 @@ def load_contract() -> DocumentNode:
             returncode=2,
         )
     doc = parse(CONTRACT.read_text(encoding="utf-8"))
-    # Hasura answers subscriptions only over WebSocket. Over HTTP the same selection is
-    # sent as a query, which reads the same views.
+    # Hasura answers subscriptions only over WebSocket. Over HTTP a live query (HomeStats,
+    # LatestBlocks) is sent as a query with the same selection, which reads the same views.
+    # A stream (root field *_stream) exists only in subscriptions: test_live.py tests it
+    # over WebSocket.
     for d in doc.definitions:
-        if isinstance(d, OperationDefinitionNode) and d.operation == OperationType.SUBSCRIPTION:
+        if (
+            isinstance(d, OperationDefinitionNode)
+            and d.operation == OperationType.SUBSCRIPTION
+            and not is_stream(d)
+        ):
             d.operation = OperationType.QUERY
     return doc
 
 
 DOCUMENT = load_contract()
-OPERATIONS = {
+ALL_OPERATIONS = {
     d.name.value: d for d in DOCUMENT.definitions if isinstance(d, OperationDefinitionNode)
 }
+# operations over HTTP (test_contract.py) and streams over WebSocket (test_live.py)
+OPERATIONS = {n: op for n, op in ALL_OPERATIONS.items() if not is_stream(op)}
+STREAMS = {n: op for n, op in ALL_OPERATIONS.items() if is_stream(op)}
 FRAGMENTS = {
     d.name.value: d for d in DOCUMENT.definitions if isinstance(d, FragmentDefinitionNode)
 }
 
 
+# The documents exactly as hasura/metadata/query_collections.yaml allows them
+TEXTS = entries(CONTRACT.read_text(encoding="utf-8"))
+
+
 def operation_text(name: str) -> str:
-    """One operation with only the fragments it uses, so a broken operation fails alone."""
-    needed, todo = {}, [OPERATIONS[name]]
-    while todo:
-        spreads = []
-
-        class Spreads(Visitor):
-            def enter_fragment_spread(self, node: FragmentSpreadNode, *_):
-                spreads.append(node.name.value)
-
-        visit(todo.pop(), Spreads())
-        for s in spreads:
-            if s not in needed:
-                needed[s] = FRAGMENTS[s]
-                todo.append(FRAGMENTS[s])
-    return print_ast(DocumentNode(definitions=[OPERATIONS[name], *needed.values()]))
+    """One operation with only the fragments it uses, as the allow-list has it. Over HTTP a
+    live-query subscription is sent as its query twin (<name>AsQuery)."""
+    return TEXTS.get(name + "AsQuery", TEXTS[name])
 
 
 def post(body: dict) -> dict:
@@ -86,6 +84,28 @@ def post(body: dict) -> dict:
         pytest.exit(f"Hasura is not running at {HASURA_URL} (docker compose up -d?)", returncode=2)
     assert r.status_code == 200, r.text
     return r.json()
+
+
+@pytest.fixture(scope="session", autouse=True)
+def database_is_the_seed():
+    """The value tests expect exactly the seed chain (blocks 0 to 3). Stop at once with a
+    clear message when the database holds more, e.g. while the mock-blocks service runs."""
+    body = post({"query": operation_text("HomeStats")})
+    if body.get("errors"):
+        pytest.exit(
+            f"HomeStats failed: {body['errors']}. If the contract changed, update the "
+            "allow-list (python hasura/allowlist.py) and rebuild Hasura "
+            "(docker compose up -d --build hasura)",
+            returncode=2,
+        )
+    height = (body.get("data") or {}).get("stats", [{}])[0].get("indexed_height")
+    if height != 3:
+        pytest.exit(
+            f"the database is not the seed (newest block {height}, expected 3). Stop the mock "
+            "and reset: docker compose stop mock-blocks && docker compose down -v && "
+            "docker compose up -d --build",
+            returncode=2,
+        )
 
 
 @pytest.fixture
