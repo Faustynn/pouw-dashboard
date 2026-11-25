@@ -129,7 +129,7 @@ jobs:
           if [ "$GITHUB_REF" = "refs/heads/main" ]; then tags+=(-t "$IMAGE:main"); fi
           if [[ "$GITHUB_REF" == refs/heads/* && "$GITHUB_REF" != refs/heads/main ]]; then
             # a tag allows [a-z0-9._-] (lower case here), at most 128 characters
-            branch="$(printf '%s' "$GITHUB_REF_NAME" | tr 'A-Z' 'a-z' | tr -c 'a-z0-9._-' '-')"
+            branch="$(printf '%s' "$GITHUB_REF_NAME" | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9._-' '-')"
             tags+=(-t "$IMAGE:branch-${branch:0:120}")
           fi
           if [[ "$GITHUB_REF" == refs/tags/v* ]]; then tags+=(-t "$IMAGE:$GITHUB_REF_NAME" -t "$IMAGE:latest"); fi
