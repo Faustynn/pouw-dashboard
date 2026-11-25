@@ -4,17 +4,30 @@ name: Docker image
 # x86 laptops) and linux/arm64 (Apple Silicon):
 #   web/     -> ghcr.io/pouw-zk/pouw-dashboard         (explorer UI)
 #   hasura/  -> ghcr.io/pouw-zk/pouw-dashboard-hasura  (Hasura with the metadata)
-# main   -> tags :main and :sha-xxxxxxx
-# v1.2.3 -> tags :v1.2.3 and :latest
+# main         -> tags :main and :sha-xxxxxxx
+# other branch -> tags :branch-<name> and :sha-xxxxxxx (feature/X -> :branch-feature-x),
+#                 for the dev network and `make images REFS=...` in pouw-deploy
+# v1.2.3       -> tags :v1.2.3, :latest and :sha-xxxxxxx
+# Every image has GIT_COMMIT, GIT_BRANCH and BUILD_TIME (build args), the
+# service shows them at GET /manage/info.
+# Only in the PoUW-ZK organization: a fork cannot push to its GHCR.
 # Each platform builds natively on its own runner (no emulation) and pushes by
 # digest; the merge job joins the digests into one multi-platform tag.
 # An image whose directory is not ready yet (see `requires`) is skipped with a message.
 
 on:
   push:
-    branches: [main]
+    # Dependabot cannot push packages, its branches only run ci.yml
+    branches: ["**", "!dependabot/**"]
     tags: ["v*"]
   workflow_dispatch:
+
+# A newer push to the same branch cancels the older run, so :branch-<name> is
+# never set back to an older commit. main and tags get a group of their own per
+# run: every commit of main keeps its :sha- image (staging deploys those).
+concurrency:
+  group: docker-${{ (startsWith(github.ref, 'refs/heads/') && github.ref != 'refs/heads/main') && github.ref || github.run_id }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
@@ -23,6 +36,7 @@ permissions:
 jobs:
   build:
     name: build ${{ matrix.target.image }} (${{ matrix.arch.platform }})
+    if: github.repository_owner == 'PoUW-ZK'
     strategy:
       fail-fast: false
       matrix:
@@ -62,6 +76,9 @@ jobs:
           docker buildx build --platform "$PLATFORM" \
             --label "org.opencontainers.image.source=https://github.com/$GITHUB_REPOSITORY" \
             --label "org.opencontainers.image.revision=$GITHUB_SHA" \
+            --build-arg "GIT_COMMIT=$GITHUB_SHA" \
+            --build-arg "GIT_BRANCH=$GITHUB_REF_NAME" \
+            --build-arg "BUILD_TIME=$(date -u +%FT%TZ)" \
             --output "type=image,name=$IMAGE,push-by-digest=true,name-canonical=true,push=true" \
             --metadata-file metadata.json "$DIR"
           digest="$(jq -r '."containerimage.digest"' metadata.json)"
@@ -110,6 +127,11 @@ jobs:
           echo "$TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
           tags=(-t "$IMAGE:sha-${GITHUB_SHA::7}")
           if [ "$GITHUB_REF" = "refs/heads/main" ]; then tags+=(-t "$IMAGE:main"); fi
+          if [[ "$GITHUB_REF" == refs/heads/* && "$GITHUB_REF" != refs/heads/main ]]; then
+            # a tag allows [a-z0-9._-] (lower case here), at most 128 characters
+            branch="$(printf '%s' "$GITHUB_REF_NAME" | tr 'A-Z' 'a-z' | tr -c 'a-z0-9._-' '-')"
+            tags+=(-t "$IMAGE:branch-${branch:0:120}")
+          fi
           if [[ "$GITHUB_REF" == refs/tags/v* ]]; then tags+=(-t "$IMAGE:$GITHUB_REF_NAME" -t "$IMAGE:latest"); fi
           refs=()
           for d in "${digests[@]}"; do refs+=("$IMAGE@sha256:${d#digests/}"); done

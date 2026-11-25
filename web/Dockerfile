@@ -15,6 +15,13 @@ ENV VITE_USE_MOCKS=$VITE_USE_MOCKS \
     VITE_NODE_2_MINER_ADDRESS=$VITE_NODE_2_MINER_ADDRESS \
     VITE_NODE_3_MINER_ADDRESS=$VITE_NODE_3_MINER_ADDRESS
 RUN npm run build
+# GET /manage/info: what runs here. pouw-deploy (make images) and docker.yml pass
+# these build args; written after the build, so a new build time alone does not
+# rebuild the app
+ARG GIT_COMMIT GIT_BRANCH BUILD_TIME
+RUN node -e 'const v = (n) => process.env[n] || "unknown"; \
+    console.log(JSON.stringify({ service: "pouw-dashboard", version: require("./package.json").version, \
+    commit: v("GIT_COMMIT"), branch: v("GIT_BRANCH"), build_time: v("BUILD_TIME") }))' >dist/manage-info.json
 
 FROM nginxinc/nginx-unprivileged:1.31-alpine
 COPY nginx.conf /etc/nginx/conf.d/default.conf
