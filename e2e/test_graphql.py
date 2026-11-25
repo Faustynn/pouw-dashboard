@@ -53,3 +53,12 @@ def test_anonymous_cannot_run_other_queries(service):
                       timeout=10)
     assert r.status_code == 200
     assert "not allowed" in r.text, r.text
+
+
+def test_manage_info(service):
+    # what runs here: version, commit, branch and build time of the image
+    r = requests.get(service("dashboard", 8080) + "/manage/info", timeout=10)
+    assert r.status_code == 200
+    info = r.json()
+    assert info["service"] == "pouw-dashboard"
+    assert {"version", "commit", "branch", "build_time"} <= info.keys()

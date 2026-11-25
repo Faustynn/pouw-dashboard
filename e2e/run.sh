@@ -7,6 +7,9 @@
 # Contract with pouw-deploy:
 #   - argument: name of the compose project of the running network;
 #   - JUNIT_DIR: directory for JUnit XML results (Tests tab in Jenkins);
+#   - PYTEST_ADDOPTS (optional): pytest options, `make test TESTS=...` sets it to
+#     -k "<expression>" to run only some tests; when none here matches, that is
+#     not a failure (exit 0);
 #   - exit code other than 0 = tests failed, staging is not deployed.
 #
 # Tests are e2e/test_*.py (pytest). They run in a container attached to the
@@ -29,11 +32,13 @@ junit_dir="$(cd "$JUNIT_DIR" && pwd)"
 
 # Runs as the current user, so results are not owned by root. HOME=/tmp lets pip
 # install there, the e2e directory itself is read-only.
+status=0
 docker run --rm \
     --network "${project}_default" \
     --user "$(id -u):$(id -g)" \
     -e HOME=/tmp \
     -e E2E_PROJECT="$project" \
+    -e PYTEST_ADDOPTS \
     -e PIP_DISABLE_PIP_VERSION_CHECK=1 \
     -e PYTHONDONTWRITEBYTECODE=1 \
     -v "$here:/e2e:ro" \
@@ -41,4 +46,12 @@ docker run --rm \
     -w /e2e \
     python:3.12-slim \
     sh -c "pip install -q --user --no-warn-script-location -r requirements.txt &&
-        python -m pytest -p no:cacheprovider -o junit_suite_name=$repo --junitxml=/reports/$repo.xml"
+        python -m pytest -p no:cacheprovider -o junit_suite_name=$repo --junitxml=/reports/$repo.xml" ||
+    status=$?
+# pytest exits with 5 when it collected no test: with a filter the tests it is
+# after are in another repository
+if [[ "$status" == 5 && -n "${PYTEST_ADDOPTS:-}" ]]; then
+    echo "$repo: no e2e test matches PYTEST_ADDOPTS ($PYTEST_ADDOPTS)"
+    status=0
+fi
+exit "$status"

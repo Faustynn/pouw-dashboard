@@ -34,6 +34,10 @@ make dev-test
 make test-down
 ```
 
+Only some tests, again and again against a copy that stays up: `make test-up`
+once, then `make test-services SERVICES=dashboard TESTS="health"` (`TESTS` is
+pytest `-k`, `run.sh` passes it in as `PYTEST_ADDOPTS`).
+
 How to write unit, smoke, integration and e2e tests: the README of pouw-deploy,
 section Tests.
 
